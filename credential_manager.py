@@ -109,18 +109,8 @@ class CredentialManager:
                 console.print(f"[yellow]Server name '{config.name}' already exists. Please choose a different name.[/yellow]")
                 return False
             
-            # Encrypt password
-            encrypted_config = ServerConfig(
-                name=config.name,
-                url=config.url,
-                username=config.username,
-                password=self._encrypt_password(config.password),
-                last_used=config.last_used,
-                created=config.created
-            )
-            
-            # Add to servers list
-            servers.append(encrypted_config)
+            # Add new server to list (password will be encrypted in _save_servers_to_file)
+            servers.append(config)
             
             # Save to file
             return self._save_servers_to_file(servers)
@@ -200,6 +190,9 @@ class CredentialManager:
             # Create backup if file exists
             if self.config_file.exists():
                 backup_file = self.config_file.with_suffix('.json.backup')
+                # Remove existing backup file if it exists
+                if backup_file.exists():
+                    backup_file.unlink()
                 self.config_file.rename(backup_file)
             
             # Prepare data for JSON serialization
@@ -212,7 +205,7 @@ class CredentialManager:
                 if server_dict['created']:
                     server_dict['created'] = server_dict['created'].isoformat()
                 
-                # Encrypt password for storage
+                # Encrypt password for storage (passwords in memory are always plaintext)
                 server_dict['password'] = self._encrypt_password(server.password)
                 servers_data.append(server_dict)
             
