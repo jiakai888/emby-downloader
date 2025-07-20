@@ -5,6 +5,7 @@ A command-line tool for extracting high-quality streaming URLs from Emby servers
 ## Features
 
 - 🔐 **Secure Authentication** - Connect to any Emby server with username/password
+- 💾 **Credential Storage** - Save server configurations for quick access
 - 🔍 **Smart Search** - Search by title or direct item ID
 - 🎯 **Quality Selection** - Automatically selects highest quality video stream
 - 🎵 **Audio Track Selection** - Choose from available audio tracks
@@ -153,6 +154,36 @@ The tool automatically selects the highest quality video stream based on:
 - Optional direct download with progress bars
 - Automatic filename sanitization
 - Subtitle files downloaded alongside video
+
+### Server Credential Management
+- **Secure Storage**: Passwords are encrypted using machine-specific keys
+- **Multiple Servers**: Save and manage multiple Emby server configurations
+- **Quick Access**: Select from saved servers on startup
+- **Easy Management**: Edit or delete saved server configurations
+
+#### Storage Location
+Server configurations are stored in:
+
+**Windows:**
+```
+C:\Users\[Username]\.emby_extractor\servers.json
+```
+
+**macOS/Linux:**
+```
+~/.emby_extractor/servers.json
+```
+
+#### Managing Saved Servers
+- **Add Server**: Choose "Add New Server" when starting the application
+- **Edit Server**: Select "Manage Servers" → "Edit server" to modify configurations
+- **Delete Server**: Select "Manage Servers" → "Delete server" to remove configurations
+- **Clear All**: Delete the entire `.emby_extractor` folder to reset all saved servers
+
+#### Security Notes
+- Passwords are encrypted with a machine-specific key
+- Configuration files have restricted permissions (user-only access)
+- Backup files are automatically created when updating configurations
 
 ## Troubleshooting
 
