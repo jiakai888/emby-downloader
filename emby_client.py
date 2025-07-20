@@ -15,6 +15,27 @@ class MediaItem:
     year: Optional[int] = None
     overview: Optional[str] = None
     duration: Optional[int] = None  # in seconds
+    # TV Series specific fields
+    season_number: Optional[int] = None
+    episode_number: Optional[int] = None
+    series_id: Optional[str] = None
+    parent_id: Optional[str] = None
+    
+    def is_series(self) -> bool:
+        """Check if this item is a TV series"""
+        return self.type.lower() == 'series'
+    
+    def is_season(self) -> bool:
+        """Check if this item is a season"""
+        return self.type.lower() == 'season'
+    
+    def is_episode(self) -> bool:
+        """Check if this item is an episode"""
+        return self.type.lower() == 'episode'
+    
+    def is_movie(self) -> bool:
+        """Check if this item is a movie"""
+        return self.type.lower() == 'movie'
 
 @dataclass
 class VideoStream:
@@ -370,6 +391,108 @@ class EmbyClient:
         
         # Add API key
         return f"{url}?api_key={self.token}"
+    
+    async def get_series_seasons(self, series_id: str) -> List[MediaItem]:
+        """Get all seasons for a TV series"""
+        if not self.token:
+            raise Exception("Not authenticated")
+        
+        try:
+            headers = {"X-MediaBrowser-Token": self.token}
+            
+            params = {
+                'ParentId': series_id,
+                'IncludeItemTypes': 'Season',
+                'Fields': 'BasicSyncInfo,ChildCount,ProductionYear'
+            }
+            
+            response = await self.client.get(
+                f"{self.base_url}/Users/{self.user_id}/Items",
+                params=params,
+                headers=headers
+            )
+            
+            if response.status_code != 200:
+                raise Exception(f"Failed to get seasons: HTTP {response.status_code}")
+            
+            data = response.json()
+            seasons = []
+            
+            for item in data.get('Items', []):
+                season = MediaItem(
+                    id=item['Id'],
+                    name=item['Name'],
+                    type=item['Type'],
+                    year=item.get('ProductionYear'),
+                    overview=item.get('Overview', ''),
+                    season_number=item.get('IndexNumber'),
+                    series_id=series_id,
+                    parent_id=series_id
+                )
+                seasons.append(season)
+            
+            # Sort by season number
+            seasons.sort(key=lambda x: x.season_number or 0)
+            return seasons
+            
+        except httpx.HTTPError as e:
+            raise Exception(f"Network error: {e}")
+        except Exception as e:
+            raise Exception(f"Error getting seasons: {e}")
+    
+    async def get_season_episodes(self, season_id: str) -> List[MediaItem]:
+        """Get all episodes for a season"""
+        if not self.token:
+            raise Exception("Not authenticated")
+        
+        try:
+            headers = {"X-MediaBrowser-Token": self.token}
+            
+            params = {
+                'ParentId': season_id,
+                'IncludeItemTypes': 'Episode',
+                'Fields': 'BasicSyncInfo,Overview,ProductionYear'
+            }
+            
+            response = await self.client.get(
+                f"{self.base_url}/Users/{self.user_id}/Items",
+                params=params,
+                headers=headers
+            )
+            
+            if response.status_code != 200:
+                raise Exception(f"Failed to get episodes: HTTP {response.status_code}")
+            
+            data = response.json()
+            episodes = []
+            
+            for item in data.get('Items', []):
+                episode = MediaItem(
+                    id=item['Id'],
+                    name=item['Name'],
+                    type=item['Type'],
+                    year=item.get('ProductionYear'),
+                    overview=item.get('Overview', ''),
+                    duration=item.get('RunTimeTicks', 0) // 10_000_000 if item.get('RunTimeTicks') else None,
+                    season_number=item.get('ParentIndexNumber'),
+                    episode_number=item.get('IndexNumber'),
+                    series_id=item.get('SeriesId'),
+                    parent_id=season_id
+                )
+                episodes.append(episode)
+            
+            # Sort by episode number
+            episodes.sort(key=lambda x: x.episode_number or 0)
+            return episodes
+            
+        except httpx.HTTPError as e:
+            raise Exception(f"Network error: {e}")
+        except Exception as e:
+            raise Exception(f"Error getting episodes: {e}")
+    
+    async def get_episode_stream_info(self, episode_id: str) -> Dict:
+        """Get stream information for an episode (same as get_stream_info but more explicit)"""
+        return await self.get_stream_info(episode_id)
     
     async def close(self):
         """Close the HTTP client"""

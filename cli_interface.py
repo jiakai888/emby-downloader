@@ -479,3 +479,116 @@ class CLIInterface:
                 console.print("[red]Invalid server selection.[/red]")
         except ValueError:
             console.print("[red]Invalid selection.[/red]")
+    
+    def display_seasons(self, seasons: List) -> List[int]:
+        """Display seasons and get user selection"""
+        if not seasons:
+            console.print("[yellow]No seasons found.[/yellow]")
+            return []
+        
+        console.print(f"[green]Found {len(seasons)} season(s):[/green]")
+        console.print()
+        
+        # Create seasons table
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("#", style="dim", width=3)
+        table.add_column("Season", style="bold")
+        table.add_column("Name", style="cyan")
+        table.add_column("Year", style="dim")
+        
+        for i, season in enumerate(seasons, 1):
+            season_num = f"Season {season.season_number}" if season.season_number else "Special"
+            year_str = str(season.year) if season.year else "N/A"
+            table.add_row(str(i), season_num, season.name, year_str)
+        
+        console.print(table)
+        console.print()
+        
+        # Get user selection
+        selection = Prompt.ask(
+            f"Select seasons (1-{len(seasons)}, A for all, or comma-separated)",
+            default="A"
+        )
+        
+        if selection.upper() == 'A':
+            return list(range(len(seasons)))
+        
+        # Parse selection
+        try:
+            indices = []
+            for part in selection.split(','):
+                idx = int(part.strip()) - 1
+                if 0 <= idx < len(seasons):
+                    indices.append(idx)
+            return indices
+        except ValueError:
+            console.print("[red]Invalid selection.[/red]")
+            return []
+    
+    def display_episodes(self, episodes: List) -> List[int]:
+        """Display episodes and get user selection"""
+        if not episodes:
+            console.print("[yellow]No episodes found.[/yellow]")
+            return []
+        
+        console.print(f"[green]Found {len(episodes)} episode(s):[/green]")
+        console.print()
+        
+        # Create episodes table
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("#", style="dim", width=3)
+        table.add_column("Episode", style="bold")
+        table.add_column("Title", style="cyan")
+        table.add_column("Duration", style="yellow")
+        
+        for i, episode in enumerate(episodes, 1):
+            episode_num = f"S{episode.season_number:02d}E{episode.episode_number:02d}" if episode.season_number and episode.episode_number else f"Episode {i}"
+            duration_str = f"{episode.duration // 60}m" if episode.duration else "Unknown"
+            table.add_row(str(i), episode_num, episode.name, duration_str)
+        
+        console.print(table)
+        console.print()
+        
+        # Get user selection
+        selection = Prompt.ask(
+            f"Select episodes (1-{len(episodes)}, A for all, or comma-separated)",
+            default="A"
+        )
+        
+        if selection.upper() == 'A':
+            return list(range(len(episodes)))
+        
+        # Parse selection
+        try:
+            indices = []
+            for part in selection.split(','):
+                idx = int(part.strip()) - 1
+                if 0 <= idx < len(episodes):
+                    indices.append(idx)
+            return indices
+        except ValueError:
+            console.print("[red]Invalid selection.[/red]")
+            return []
+    
+    def ask_download_options(self) -> str:
+        """Ask user about download options for multiple items"""
+        console.print("\n[bold blue]Download Options:[/bold blue]")
+        console.print("1. Download selected items individually")
+        console.print("2. Batch download (one after another)")
+        console.print("3. Save URLs to file")
+        console.print()
+        
+        choice = Prompt.ask("Select option (1-3)", default="2")
+        
+        if choice == "1":
+            return "individual"
+        elif choice == "2":
+            return "batch"
+        elif choice == "3":
+            return "save_urls"
+        else:
+            return "batch"  # Default to batch
+    
+    def confirm_batch_download(self, count: int, item_type: str = "items") -> bool:
+        """Confirm batch download operation"""
+        return Confirm.ask(f"[cyan]Download {count} {item_type} in sequence?[/cyan]", default=True)

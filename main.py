@@ -12,6 +12,129 @@ from signal_handler import SignalHandler, ShutdownCoordinator
 
 console = Console()
 
+async def save_episode_urls(episodes, series_item, emby_client, cli):
+    """Save episode URLs to file"""
+    import datetime
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"emby_episodes_{timestamp}.txt"
+    
+    with open(filename, 'w', encoding='utf-8') as f:
+        f.write(f"Emby Episode URLs - Generated on {datetime.datetime.now()}\n")
+        f.write("=" * 50 + "\n\n")
+        f.write(f"Series: {series_item.name}\n")
+        f.write(f"Year: {series_item.year}\n")
+        f.write(f"Episodes: {len(episodes)}\n\n")
+        
+        for episode in episodes:
+            try:
+                # Get stream info for episode
+                stream_info = await emby_client.get_episode_stream_info(episode.id)
+                
+                # Generate video URL
+                best_video = stream_info['video_streams'][0] if stream_info['video_streams'] else None
+                if best_video:
+                    video_url = await emby_client.generate_stream_url(episode.id, best_video.index, 0)
+                    
+                    f.write(f"Episode: S{episode.season_number:02d}E{episode.episode_number:02d} - {episode.name}\n")
+                    f.write(f"Video URL: {video_url}\n\n")
+                
+            except Exception as e:
+                f.write(f"Episode: S{episode.season_number:02d}E{episode.episode_number:02d} - {episode.name}\n")
+                f.write(f"Error: {e}\n\n")
+    
+    console.print(f"[green]Episode URLs saved to: {filename}[/green]")
+
+async def process_episode(episode, series_item, emby_client, cli, downloader, series_navigator, ask_individual_confirmation):
+    """Process a single episode"""
+    try:
+        # Get stream information for episode
+        console.print("[dim]Analyzing streams...[/dim]")
+        stream_info = await emby_client.get_episode_stream_info(episode.id)
+        
+        # Select best video stream
+        video_streams = stream_info['video_streams']
+        if not video_streams:
+            console.print("[red]No video streams found[/red]")
+            return
+        
+        from media_analyzer import MediaAnalyzer
+        best_video = MediaAnalyzer.select_best_video_stream(video_streams)
+        console.print(f"[green]Selected quality:[/green] {MediaAnalyzer.format_quality_info(best_video)}")
+        
+        # Select audio track (auto-select first one for batch processing)
+        audio_streams = stream_info['audio_streams']
+        if audio_streams:
+            if ask_individual_confirmation:
+                audio_index = cli.select_audio_track(audio_streams)
+            else:
+                audio_index = 0  # Auto-select first audio track for batch
+            selected_audio = audio_streams[audio_index]
+            console.print(f"[green]Selected audio:[/green] {MediaAnalyzer.format_audio_info(selected_audio)}")
+        else:
+            audio_index = 0
+            console.print("[yellow]No audio tracks found[/yellow]")
+        
+        # Select subtitles (auto-select none for batch processing)
+        subtitle_streams = stream_info['subtitle_streams']
+        if ask_individual_confirmation:
+            subtitle_indices = cli.select_subtitles(subtitle_streams)
+        else:
+            subtitle_indices = []  # No subtitles for batch processing
+        
+        # Generate URLs
+        console.print("\n[blue]Generating URLs...[/blue]")
+        
+        video_url = await emby_client.generate_stream_url(
+            episode.id, 
+            best_video.index, 
+            audio_index
+        )
+        
+        subtitle_urls = []
+        for sub_idx in subtitle_indices:
+            sub_stream = subtitle_streams[sub_idx]
+            sub_url = await emby_client.generate_subtitle_url(episode.id, sub_stream.index)
+            subtitle_urls.append((sub_stream.language, sub_url))
+        
+        # Generate episode filename
+        filename = series_navigator.generate_episode_filename(
+            episode, 
+            series_item.name, 
+            stream_info['container']
+        )
+        
+        # Create directory structure
+        episode_dir = series_navigator.generate_episode_directory(
+            series_item.name, 
+            episode.season_number
+        )
+        
+        # Ask about download (only for individual processing)
+        should_download = True
+        if ask_individual_confirmation:
+            # Display URLs first
+            media_info = {
+                'duration': f"{episode.duration // 60}m" if episode.duration else "Unknown",
+                'size': MediaAnalyzer.estimate_file_size(stream_info['bitrate'], episode.duration or 0),
+                'video': MediaAnalyzer.format_quality_info(best_video),
+                'audio': MediaAnalyzer.format_audio_info(selected_audio) if audio_streams else "Unknown"
+            }
+            cli.display_urls(video_url, subtitle_urls, media_info)
+            should_download = cli.ask_download()
+        
+        if should_download:
+            # Download video
+            success = await downloader.download_file(video_url, filename, episode_dir)
+            
+            # Download subtitles if video download succeeded
+            if success and subtitle_urls:
+                base_name = filename.rsplit('.', 1)[0]  # Remove extension
+                await downloader.download_subtitles(subtitle_urls, base_name, episode_dir)
+        
+    except Exception as e:
+        console.print(f"[red]Error processing episode: {e}[/red]")
+        raise
+
 def display_banner():
     """Display the application banner"""
     banner = Text("Emby URL Extractor", style="bold blue")
@@ -43,6 +166,7 @@ async def main():
         from emby_client import EmbyClient
         from media_analyzer import MediaAnalyzer
         from downloader import Downloader
+        from series_navigator import SeriesNavigator
         
         # Import credential manager
         from credential_manager import CredentialManager, ServerConfig
@@ -52,6 +176,7 @@ async def main():
         cli = CLIInterface(credential_manager)
         emby_client = EmbyClient()
         downloader = Downloader(shutdown_coordinator)
+        series_navigator = SeriesNavigator(emby_client, cli)
         
         # Register cleanup handlers
         if emby_client:
@@ -98,7 +223,40 @@ async def main():
             console.print(f"\n[bold blue]Processing: {item.name}[/bold blue]")
             
             try:
-                # Get stream information
+                # Check if this is a TV series
+                if item.is_series():
+                    # Handle TV series - browse seasons and episodes
+                    episodes = await series_navigator.browse_series(item)
+                    
+                    if not episodes:
+                        console.print("[yellow]No episodes selected.[/yellow]")
+                        continue
+                    
+                    # Ask about download options for multiple episodes
+                    download_option = cli.ask_download_options()
+                    
+                    if download_option == "save_urls":
+                        # Save URLs to file for all episodes
+                        await save_episode_urls(episodes, item, emby_client, cli)
+                        continue
+                    elif download_option == "batch":
+                        # Confirm batch download
+                        if not cli.confirm_batch_download(len(episodes), "episodes"):
+                            continue
+                    
+                    # Process each episode
+                    for episode_idx, episode in enumerate(episodes, 1):
+                        console.print(f"\n[bold cyan]Processing Episode {episode_idx}/{len(episodes)}: {episode.name}[/bold cyan]")
+                        
+                        try:
+                            await process_episode(episode, item, emby_client, cli, downloader, series_navigator, download_option == "individual")
+                        except Exception as e:
+                            console.print(f"[red]Error processing episode {episode.name}: {e}[/red]")
+                            continue
+                    
+                    continue
+                
+                # Handle movies (existing logic)
                 console.print("[dim]Analyzing streams...[/dim]")
                 stream_info = await emby_client.get_stream_info(item.id)
                 

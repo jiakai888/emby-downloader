@@ -33,9 +33,9 @@ class Downloader:
     ) -> bool:
         """Download a file with progress tracking"""
         try:
-            # Create output directory
+            # Create output directory (including all parent directories)
             output_path = Path(output_dir)
-            output_path.mkdir(exist_ok=True)
+            output_path.mkdir(parents=True, exist_ok=True)
             
             file_path = output_path / filename
             
