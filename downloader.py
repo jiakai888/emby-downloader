@@ -21,8 +21,9 @@ console = Console()
 class Downloader:
     """Handles file downloading with progress tracking"""
     
-    def __init__(self):
+    def __init__(self, shutdown_coordinator=None):
         self.client = None
+        self.shutdown_coordinator = shutdown_coordinator
     
     async def download_file(
         self, 
@@ -78,6 +79,13 @@ class Downloader:
                     # Download file
                     with open(file_path, "wb") as file:
                         async for chunk in response.aiter_bytes(chunk_size=8192):
+                            # Check for shutdown request
+                            if self.shutdown_coordinator and self.shutdown_coordinator.is_shutdown_requested():
+                                console.print(f"\n[yellow]Download cancelled: {filename}[/yellow]")
+                                # Remove incomplete file
+                                file_path.unlink(missing_ok=True)
+                                return False
+                            
                             file.write(chunk)
                             progress.update(task, advance=len(chunk))
             

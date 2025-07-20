@@ -11,18 +11,95 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from emby_client import MediaItem, AudioStream, SubtitleStream
+from credential_manager import CredentialManager, ServerConfig
 
 console = Console()
 
 class CLIInterface:
     """Command-line interface for user interaction"""
     
-    def __init__(self):
+    def __init__(self, credential_manager: CredentialManager = None):
         self.console = console
+        self.credential_manager = credential_manager or CredentialManager()
     
     async def get_server_info(self) -> Tuple[str, str, str]:
         """Get server connection information from user"""
         console.print("[bold blue]Server Connection[/bold blue]")
+        console.print()
+        
+        # Load saved servers
+        saved_servers = self.credential_manager.load_servers()
+        
+        if saved_servers:
+            # Display saved servers
+            selected_server = self.display_saved_servers(saved_servers)
+            
+            if selected_server:
+                # Update last used timestamp
+                self.credential_manager.update_server_last_used(selected_server.name)
+                return selected_server.url, selected_server.username, selected_server.password
+        
+        # No saved servers or user chose to add new server
+        return await self.get_new_server_info()
+    
+    def display_saved_servers(self, servers: List[ServerConfig]) -> Optional[ServerConfig]:
+        """Display saved servers and get user selection"""
+        console.print(f"[green]Found {len(servers)} saved server(s):[/green]")
+        console.print()
+        
+        # Create servers table
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("#", style="dim", width=3)
+        table.add_column("Server Name", style="bold")
+        table.add_column("URL", style="cyan")
+        table.add_column("Username", style="yellow")
+        table.add_column("Last Used", style="dim")
+        
+        for i, server in enumerate(servers, 1):
+            last_used = server.last_used.strftime("%Y-%m-%d %H:%M") if server.last_used else "Never"
+            table.add_row(
+                str(i),
+                server.name,
+                server.url,
+                server.username,
+                last_used
+            )
+        
+        # Add "Add New Server" option
+        table.add_row(
+            str(len(servers) + 1),
+            "[bold green]Add New Server[/bold green]",
+            "-",
+            "-",
+            "-"
+        )
+        
+        console.print(table)
+        console.print()
+        
+        # Get user selection
+        selection = Prompt.ask(
+            f"Select server (1-{len(servers) + 1})",
+            default="1"
+        )
+        
+        try:
+            idx = int(selection) - 1
+            if 0 <= idx < len(servers):
+                return servers[idx]
+            elif idx == len(servers):
+                # User chose "Add New Server"
+                return None
+            else:
+                console.print("[red]Invalid selection.[/red]")
+                return None
+        except ValueError:
+            console.print("[red]Invalid selection.[/red]")
+            return None
+    
+    async def get_new_server_info(self) -> Tuple[str, str, str]:
+        """Get new server information from user"""
+        console.print("[bold blue]Add New Server[/bold blue]")
         console.print()
         
         # Get server URL
@@ -212,3 +289,47 @@ class CLIInterface:
     def ask_save_urls(self) -> bool:
         """Ask user if they want to save URLs to file"""
         return Confirm.ask("Save URLs to file?", default=True)
+    
+    async def offer_to_save_server(self, url: str, username: str, password: str, server_name: str):
+        """Offer to save server credentials after successful authentication"""
+        # Check if this server is already saved
+        saved_servers = self.credential_manager.load_servers()
+        existing_server = None
+        
+        for server in saved_servers:
+            if server.url == url and server.username == username:
+                existing_server = server
+                break
+        
+        if existing_server:
+            # Server already exists, just update last used
+            self.credential_manager.update_server_last_used(existing_server.name)
+            console.print(f"[green]Welcome back! Using saved server: {existing_server.name}[/green]")
+            return
+        
+        # Ask if user wants to save this new server
+        if Confirm.ask(f"[cyan]Save server credentials for future use?[/cyan]", default=True):
+            # Get a name for this server
+            default_name = server_name or "Emby Server"
+            server_display_name = Prompt.ask(
+                "Enter a name for this server",
+                default=default_name
+            )
+            
+            # Create server config
+            server_config = ServerConfig(
+                name=server_display_name,
+                url=url,
+                username=username,
+                password=password
+            )
+            
+            # Validate and save
+            is_valid, error_msg = self.credential_manager.validate_server_config(server_config)
+            if is_valid:
+                if self.credential_manager.save_server(server_config):
+                    console.print(f"[green]✓ Server '{server_display_name}' saved successfully![/green]")
+                else:
+                    console.print("[red]✗ Failed to save server configuration.[/red]")
+            else:
+                console.print(f"[red]✗ Invalid server configuration: {error_msg}[/red]")

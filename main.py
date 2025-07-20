@@ -8,6 +8,7 @@ import sys
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
+from signal_handler import SignalHandler, ShutdownCoordinator
 
 console = Console()
 
@@ -26,9 +27,16 @@ async def main():
     """Main application entry point"""
     emby_client = None
     downloader = None
+    shutdown_coordinator = None
+    signal_handler = None
     
     try:
         display_banner()
+        
+        # Initialize shutdown coordination
+        shutdown_coordinator = ShutdownCoordinator(console)
+        signal_handler = SignalHandler(shutdown_coordinator)
+        signal_handler.setup_handlers()
         
         # Import components
         from cli_interface import CLIInterface
@@ -36,10 +44,20 @@ async def main():
         from media_analyzer import MediaAnalyzer
         from downloader import Downloader
         
-        # Initialize components
-        cli = CLIInterface()
+        # Import credential manager
+        from credential_manager import CredentialManager, ServerConfig
+        
+        # Initialize components with shutdown coordinator
+        credential_manager = CredentialManager()
+        cli = CLIInterface(credential_manager)
         emby_client = EmbyClient()
-        downloader = Downloader()
+        downloader = Downloader(shutdown_coordinator)
+        
+        # Register cleanup handlers
+        if emby_client:
+            shutdown_coordinator.register_cleanup_handler("emby_client", emby_client.close, priority=1)
+        if downloader:
+            shutdown_coordinator.register_cleanup_handler("downloader", downloader.close, priority=2)
         
         # Step 1: Get server connection info
         url, username, password = await cli.get_server_info()
@@ -53,6 +71,9 @@ async def main():
             return
         
         cli.display_login_status(True, auth_result['server_name'])
+        
+        # Offer to save server credentials if authentication was successful
+        await cli.offer_to_save_server(url, username, password, auth_result['server_name'])
         
         # Step 3: Search for content
         query = await cli.get_search_query()
@@ -174,18 +195,20 @@ async def main():
         
         console.print("\n[green]All done![/green]")
         
-    except KeyboardInterrupt:
-        console.print("\n[red]Application interrupted by user[/red]")
-        sys.exit(1)
     except Exception as e:
         console.print(f"[red]Unexpected error: {e}[/red]")
         sys.exit(1)
     finally:
-        # Cleanup
-        if emby_client:
-            await emby_client.close()
-        if downloader:
-            await downloader.close()
+        # Cleanup is now handled by shutdown coordinator
+        if shutdown_coordinator and shutdown_coordinator.is_shutdown_requested():
+            # Shutdown was already handled gracefully
+            pass
+        else:
+            # Normal cleanup for regular exit
+            if emby_client:
+                await emby_client.close()
+            if downloader:
+                await downloader.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
