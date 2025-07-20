@@ -32,7 +32,7 @@ class CLIInterface:
         
         if saved_servers:
             # Display saved servers
-            selected_server = self.display_saved_servers(saved_servers)
+            selected_server = await self.display_saved_servers(saved_servers)
             
             if selected_server:
                 # Update last used timestamp
@@ -42,7 +42,7 @@ class CLIInterface:
         # No saved servers or user chose to add new server
         return await self.get_new_server_info()
     
-    def display_saved_servers(self, servers: List[ServerConfig]) -> Optional[ServerConfig]:
+    async def display_saved_servers(self, servers: List[ServerConfig]) -> Optional[ServerConfig]:
         """Display saved servers and get user selection"""
         console.print(f"[green]Found {len(servers)} saved server(s):[/green]")
         console.print()
@@ -74,12 +74,21 @@ class CLIInterface:
             "-"
         )
         
+        # Add "Manage Servers" option
+        table.add_row(
+            str(len(servers) + 2),
+            "[bold yellow]Manage Servers[/bold yellow]",
+            "-",
+            "-",
+            "-"
+        )
+        
         console.print(table)
         console.print()
         
         # Get user selection
         selection = Prompt.ask(
-            f"Select server (1-{len(servers) + 1})",
+            f"Select server (1-{len(servers) + 2})",
             default="1"
         )
         
@@ -90,6 +99,11 @@ class CLIInterface:
             elif idx == len(servers):
                 # User chose "Add New Server"
                 return None
+            elif idx == len(servers) + 1:
+                # User chose "Manage Servers"
+                await self.manage_servers_menu()
+                # After managing servers, show the server list again
+                return await self.display_saved_servers(self.credential_manager.load_servers())
             else:
                 console.print("[red]Invalid selection.[/red]")
                 return None
@@ -333,3 +347,135 @@ class CLIInterface:
                     console.print("[red]✗ Failed to save server configuration.[/red]")
             else:
                 console.print(f"[red]✗ Invalid server configuration: {error_msg}[/red]")
+    
+    async def manage_servers_menu(self):
+        """Display server management menu"""
+        while True:
+            console.print("\n[bold blue]Server Management[/bold blue]")
+            console.print()
+            
+            servers = self.credential_manager.load_servers()
+            
+            if not servers:
+                console.print("[yellow]No saved servers found.[/yellow]")
+                return
+            
+            # Display servers with management options
+            table = Table(show_header=True, header_style="bold magenta")
+            table.add_column("#", style="dim", width=3)
+            table.add_column("Server Name", style="bold")
+            table.add_column("URL", style="cyan")
+            table.add_column("Username", style="yellow")
+            table.add_column("Last Used", style="dim")
+            
+            for i, server in enumerate(servers, 1):
+                last_used = server.last_used.strftime("%Y-%m-%d %H:%M") if server.last_used else "Never"
+                table.add_row(
+                    str(i),
+                    server.name,
+                    server.url,
+                    server.username,
+                    last_used
+                )
+            
+            console.print(table)
+            console.print()
+            
+            # Management options
+            console.print("[bold]Management Options:[/bold]")
+            console.print("1. Edit server")
+            console.print("2. Delete server")
+            console.print("3. Back to main menu")
+            console.print()
+            
+            choice = Prompt.ask("Select action (1-3)", default="3")
+            
+            if choice == "1":
+                await self.edit_server(servers)
+            elif choice == "2":
+                await self.delete_server(servers)
+            elif choice == "3":
+                break
+            else:
+                console.print("[red]Invalid choice.[/red]")
+    
+    async def edit_server(self, servers: List[ServerConfig]):
+        """Edit a server configuration"""
+        if not servers:
+            return
+        
+        console.print("\n[bold blue]Edit Server[/bold blue]")
+        server_choice = Prompt.ask(f"Select server to edit (1-{len(servers)})")
+        
+        try:
+            idx = int(server_choice) - 1
+            if 0 <= idx < len(servers):
+                server = servers[idx]
+                console.print(f"\nEditing server: [bold]{server.name}[/bold]")
+                
+                # Get new values (with current values as defaults)
+                new_name = Prompt.ask("Server name", default=server.name)
+                new_url = Prompt.ask("Server URL", default=server.url)
+                new_username = Prompt.ask("Username", default=server.username)
+                
+                # Ask if user wants to change password
+                change_password = Confirm.ask("Change password?", default=False)
+                if change_password:
+                    new_password = getpass.getpass("Enter new password: ")
+                else:
+                    new_password = server.password
+                
+                # Create updated server config
+                updated_server = ServerConfig(
+                    name=new_name,
+                    url=new_url,
+                    username=new_username,
+                    password=new_password,
+                    last_used=server.last_used,
+                    created=server.created
+                )
+                
+                # Validate
+                is_valid, error_msg = self.credential_manager.validate_server_config(updated_server)
+                if not is_valid:
+                    console.print(f"[red]✗ Invalid configuration: {error_msg}[/red]")
+                    return
+                
+                # Delete old server and save new one
+                if self.credential_manager.delete_server(server.name):
+                    if self.credential_manager.save_server(updated_server):
+                        console.print(f"[green]✓ Server '{new_name}' updated successfully![/green]")
+                    else:
+                        console.print("[red]✗ Failed to save updated server.[/red]")
+                else:
+                    console.print("[red]✗ Failed to update server.[/red]")
+            else:
+                console.print("[red]Invalid server selection.[/red]")
+        except ValueError:
+            console.print("[red]Invalid selection.[/red]")
+    
+    async def delete_server(self, servers: List[ServerConfig]):
+        """Delete a server configuration"""
+        if not servers:
+            return
+        
+        console.print("\n[bold blue]Delete Server[/bold blue]")
+        server_choice = Prompt.ask(f"Select server to delete (1-{len(servers)})")
+        
+        try:
+            idx = int(server_choice) - 1
+            if 0 <= idx < len(servers):
+                server = servers[idx]
+                
+                # Confirm deletion
+                if Confirm.ask(f"[red]Are you sure you want to delete '{server.name}'?[/red]", default=False):
+                    if self.credential_manager.delete_server(server.name):
+                        console.print(f"[green]✓ Server '{server.name}' deleted successfully![/green]")
+                    else:
+                        console.print("[red]✗ Failed to delete server.[/red]")
+                else:
+                    console.print("[yellow]Deletion cancelled.[/yellow]")
+            else:
+                console.print("[red]Invalid server selection.[/red]")
+        except ValueError:
+            console.print("[red]Invalid selection.[/red]")
