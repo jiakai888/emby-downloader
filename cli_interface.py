@@ -10,7 +10,7 @@ from rich.prompt import Prompt, Confirm
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from emby_client import MediaItem, AudioStream, SubtitleStream
+from emby_client import MediaItem, AudioStream, SubtitleStream, VideoStream
 from credential_manager import CredentialManager, ServerConfig
 
 console = Console()
@@ -188,6 +188,77 @@ class CLIInterface:
             console.print("[red]Invalid selection.[/red]")
             return []
     
+    def select_video_quality(self, streams: List[VideoStream]) -> int:
+        """Display video quality options and get user selection"""
+        # Import here to avoid circular import
+        from media_analyzer import MediaAnalyzer
+        
+        if not streams:
+            return 0  # No streams available
+        
+        console.print("[bold blue]Available video qualities:[/bold blue]")
+        
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("#", width=3)
+        table.add_column("Quality", style="cyan")
+        table.add_column("Resolution", style="yellow")
+        table.add_column("Bitrate", style="green")
+        table.add_column("Codec", style="dim")
+        table.add_column("Framerate", style="dim")
+        
+        for i, stream in enumerate(streams, 1):
+            # Determine quality label
+            if stream.height >= 2160:
+                quality_label = "4K UHD"
+            elif stream.height >= 1080:
+                quality_label = "1080p"
+            elif stream.height >= 720:
+                quality_label = "720p"
+            else:
+                quality_label = f"{stream.height}p"
+            
+            resolution = f"{stream.width}x{stream.height}"
+            bitrate_mbps = f"{stream.bitrate / 1000000:.1f} Mbps"
+            framerate_str = f"{stream.framerate:.1f} fps" if stream.framerate else "N/A"
+            
+            table.add_row(
+                str(i),
+                quality_label,
+                resolution,
+                bitrate_mbps,
+                stream.codec.upper(),
+                framerate_str
+            )
+        
+        console.print(table)
+        console.print()
+        
+        # Sort by quality score and show recommended option
+        sorted_streams = sorted(enumerate(streams), key=lambda x: MediaAnalyzer.calculate_video_quality_score(x[1]), reverse=True)
+        recommended_idx = sorted_streams[0][0] + 1
+        
+        if len(streams) == 1:
+            # Only one option available, but still show the interface
+            selection = Prompt.ask(
+                f"Select video quality (1 - only one available)", 
+                default="1"
+            )
+        else:
+            # Multiple options available
+            selection = Prompt.ask(
+                f"Select video quality (1-{len(streams)}, recommended: {recommended_idx})", 
+                default=str(recommended_idx)
+            )
+        
+        try:
+            selected_idx = int(selection) - 1
+            if 0 <= selected_idx < len(streams):
+                return selected_idx
+            else:
+                return recommended_idx - 1
+        except ValueError:
+            return recommended_idx - 1
+
     def select_audio_track(self, tracks: List[AudioStream]) -> int:
         """Display audio tracks and get user selection"""
         if len(tracks) <= 1:

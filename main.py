@@ -31,8 +31,10 @@ async def save_episode_urls(episodes, series_item, emby_client, cli):
                 stream_info = await emby_client.get_episode_stream_info(episode.id)
                 
                 # Generate video URL
-                best_video = stream_info['video_streams'][0] if stream_info['video_streams'] else None
-                if best_video:
+                video_streams = stream_info['video_streams']
+                if video_streams:
+                    from media_analyzer import MediaAnalyzer
+                    best_video = MediaAnalyzer.select_best_video_stream(video_streams)
                     video_url = await emby_client.generate_stream_url(episode.id, best_video.index, 0)
                     
                     f.write(f"Episode: S{episode.season_number:02d}E{episode.episode_number:02d} - {episode.name}\n")
@@ -51,15 +53,22 @@ async def process_episode(episode, series_item, emby_client, cli, downloader, se
         console.print("[dim]Analyzing streams...[/dim]")
         stream_info = await emby_client.get_episode_stream_info(episode.id)
         
-        # Select best video stream
+        # Select video quality
         video_streams = stream_info['video_streams']
         if not video_streams:
             console.print("[red]No video streams found[/red]")
             return
         
         from media_analyzer import MediaAnalyzer
-        best_video = MediaAnalyzer.select_best_video_stream(video_streams)
-        console.print(f"[green]Selected quality:[/green] {MediaAnalyzer.format_quality_info(best_video)}")
+        if ask_individual_confirmation:
+            video_index = cli.select_video_quality(video_streams)
+            selected_video = video_streams[video_index]
+        else:
+            # Auto-select best quality for batch processing
+            selected_video = MediaAnalyzer.select_best_video_stream(video_streams)
+            video_index = video_streams.index(selected_video)
+        
+        console.print(f"[green]Selected quality:[/green] {MediaAnalyzer.format_quality_info(selected_video)}")
         
         # Select audio track (auto-select first one for batch processing)
         audio_streams = stream_info['audio_streams']
@@ -86,7 +95,7 @@ async def process_episode(episode, series_item, emby_client, cli, downloader, se
         
         video_url = await emby_client.generate_stream_url(
             episode.id, 
-            best_video.index, 
+            selected_video.index, 
             audio_index
         )
         
@@ -116,7 +125,7 @@ async def process_episode(episode, series_item, emby_client, cli, downloader, se
             media_info = {
                 'duration': f"{episode.duration // 60}m" if episode.duration else "Unknown",
                 'size': MediaAnalyzer.estimate_file_size(stream_info['bitrate'], episode.duration or 0),
-                'video': MediaAnalyzer.format_quality_info(best_video),
+                'video': MediaAnalyzer.format_quality_info(selected_video),
                 'audio': MediaAnalyzer.format_audio_info(selected_audio) if audio_streams else "Unknown"
             }
             cli.display_urls(video_url, subtitle_urls, media_info)
@@ -260,14 +269,15 @@ async def main():
                 console.print("[dim]Analyzing streams...[/dim]")
                 stream_info = await emby_client.get_stream_info(item.id)
                 
-                # Select best video stream
+                # Select video quality
                 video_streams = stream_info['video_streams']
                 if not video_streams:
                     console.print("[red]No video streams found[/red]")
                     continue
                 
-                best_video = MediaAnalyzer.select_best_video_stream(video_streams)
-                console.print(f"[green]Selected quality:[/green] {MediaAnalyzer.format_quality_info(best_video)}")
+                video_index = cli.select_video_quality(video_streams)
+                selected_video = video_streams[video_index]
+                console.print(f"[green]Selected quality:[/green] {MediaAnalyzer.format_quality_info(selected_video)}")
                 
                 # Select audio track
                 audio_streams = stream_info['audio_streams']
@@ -288,7 +298,7 @@ async def main():
                 
                 video_url = await emby_client.generate_stream_url(
                     item.id, 
-                    best_video.index, 
+                    selected_video.index, 
                     audio_index
                 )
                 
@@ -302,7 +312,7 @@ async def main():
                 media_info = {
                     'duration': f"{item.duration // 3600}h {(item.duration % 3600) // 60}m" if item.duration else "Unknown",
                     'size': MediaAnalyzer.estimate_file_size(stream_info['bitrate'], item.duration or 0),
-                    'video': MediaAnalyzer.format_quality_info(best_video),
+                    'video': MediaAnalyzer.format_quality_info(selected_video),
                     'audio': MediaAnalyzer.format_audio_info(selected_audio) if audio_streams else "Unknown"
                 }
                 
